@@ -24,10 +24,11 @@ const FALLBACK: Meal[] = [
 
 export default function DietaPage() {
   const [meals, setMeals] = useState<Meal[]>(FALLBACK);
-  const supabase = supabaseBrowser();
 
   useEffect(() => {
     (async () => {
+      const supabase = supabaseBrowser();
+      if (!supabase) return;
       const { data } = await supabase.from("meals").select("*").order("position");
       if (data?.length) setMeals(data as Meal[]);
     })();
@@ -35,7 +36,8 @@ export default function DietaPage() {
 
   async function toggle(id: string, done: boolean) {
     setMeals((p) => p.map((m) => (m.id === id ? { ...m, done } : m)));
-    await supabase.from("meals").update({ done }).eq("id", id);
+    const supabase = supabaseBrowser();
+    if (supabase) await supabase.from("meals").update({ done }).eq("id", id);
   }
 
   const month = meals[0]?.month ?? "Abril";

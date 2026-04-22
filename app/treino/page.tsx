@@ -29,10 +29,11 @@ const FALLBACK_EX: WorkoutExercise[] = [
 export default function TreinoPage() {
   const [days, setDays] = useState<WorkoutDay[]>(FALLBACK_DAYS);
   const [exercises, setExercises] = useState<WorkoutExercise[]>(FALLBACK_EX);
-  const supabase = supabaseBrowser();
 
   useEffect(() => {
     (async () => {
+      const supabase = supabaseBrowser();
+      if (!supabase) return;
       const [d, e] = await Promise.all([
         supabase.from("workout_days").select("*").order("day_of_week"),
         supabase.from("workout_exercises").select("*").order("position"),
@@ -51,7 +52,8 @@ export default function TreinoPage() {
 
   async function toggle(id: string, done: boolean) {
     setExercises((p) => p.map((e) => (e.id === id ? { ...e, done } : e)));
-    await supabase.from("workout_exercises").update({ done }).eq("id", id);
+    const supabase = supabaseBrowser();
+    if (supabase) await supabase.from("workout_exercises").update({ done }).eq("id", id);
   }
 
   const today = new Date().getDay();

@@ -20,22 +20,24 @@ export default function Home() {
   const [tasks, setTasks] = useState<Task[]>(FALLBACK_TASKS);
   const [q, setQ] = useState("");
   const [loaded, setLoaded] = useState(false);
-  const supabase = supabaseBrowser();
 
   useEffect(() => {
     (async () => {
+      const supabase = supabaseBrowser();
+      if (!supabase) { setLoaded(true); return; }
       const { data, error } = await supabase
         .from("tasks")
         .select("*")
         .order("position");
-      if (!error && data) setTasks(data as Task[]);
+      if (!error && data?.length) setTasks(data as Task[]);
       setLoaded(true);
     })();
   }, []);
 
   async function toggle(id: string, done: boolean) {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, done } : t)));
-    await supabase.from("tasks").update({ done }).eq("id", id);
+    const supabase = supabaseBrowser();
+    if (supabase) await supabase.from("tasks").update({ done }).eq("id", id);
   }
 
   async function addTask() {
@@ -45,6 +47,8 @@ export default function Home() {
     const optimistic: Task = { id: crypto.randomUUID(), title, done: false, position };
     setTasks((p) => [...p, optimistic]);
     setQ("");
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
     const { data } = await supabase
       .from("tasks")
       .insert({ title, position })

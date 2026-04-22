@@ -23,10 +23,11 @@ export default function LivrosPage() {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
-  const supabase = supabaseBrowser();
 
   useEffect(() => {
     (async () => {
+      const supabase = supabaseBrowser();
+      if (!supabase) return;
       const { data } = await supabase
         .from("books")
         .select("*")
@@ -37,7 +38,8 @@ export default function LivrosPage() {
 
   async function toggle(id: string, read: boolean) {
     setBooks((p) => p.map((b) => (b.id === id ? { ...b, read } : b)));
-    await supabase.from("books").update({ read }).eq("id", id);
+    const supabase = supabaseBrowser();
+    if (supabase) await supabase.from("books").update({ read }).eq("id", id);
   }
 
   async function addBook(e: React.FormEvent) {
@@ -51,6 +53,8 @@ export default function LivrosPage() {
     };
     setBooks((p) => [...p, optimistic]);
     setTitle(""); setAuthor(""); setAdding(false);
+    const supabase = supabaseBrowser();
+    if (!supabase) return;
     const { data } = await supabase
       .from("books")
       .insert({ title: t, author: a || "—", year, position })
