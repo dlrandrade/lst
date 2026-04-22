@@ -1,7 +1,29 @@
 import { startOfDay } from "date-fns";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
-import { db } from "@/lib/db";
+import {
+  type AppointmentRow,
+  type BookRow,
+  type ExamRow,
+  type MealItemRow,
+  type MealPlanRow,
+  type MealSectionRow,
+  type MedicationRow,
+  type MedicationScheduleRow,
+  type MovieRow,
+  type ProfileRow,
+  type ReminderRow,
+  type TaskLogRow,
+  type TaskRow,
+  type UserRow,
+  type WaterGoalRow,
+  type WaterLogRow,
+  type WorkoutDayRow,
+  type WorkoutExerciseRow,
+  type WorkoutPlanRow,
+  getDataClient,
+  requireValue,
+  unwrapData,
+} from "@/lib/supabase/data";
 
 function inferName(email: string, fullName?: string | null) {
   if (fullName?.trim()) {
@@ -11,8 +33,47 @@ function inferName(email: string, fullName?: string | null) {
   return email.split("@")[0] || "Usuario";
 }
 
+async function ensureBaseRecords(userId: string, email: string, fullName?: string | null) {
+  const supabase = await getDataClient();
+
+  unwrapData(
+    await supabase.from("User").upsert(
+      {
+        id: userId,
+        email,
+      },
+      { onConflict: "id" },
+    ),
+    "Failed to sync user",
+  );
+
+  unwrapData(
+    await supabase.from("Profile").upsert(
+      {
+        userId,
+        fullName: inferName(email, fullName),
+        timezone: "America/Recife",
+        dailyWaterGoal: 2500,
+      },
+      { onConflict: "userId" },
+    ),
+    "Failed to sync profile",
+  );
+
+  unwrapData(
+    await supabase.from("WaterGoal").upsert(
+      {
+        userId,
+        dailyGoalMl: 2500,
+      },
+      { onConflict: "userId" },
+    ),
+    "Failed to sync water goal",
+  );
+}
+
 export async function getCurrentUserContext() {
-  const supabase = await createClient();
+  const supabase = await getDataClient();
   const {
     data: { user: authUser },
   } = await supabase.auth.getUser();
@@ -27,102 +88,184 @@ export async function getCurrentUserContext() {
       ? authUser.user_metadata.full_name
       : null;
 
-  await db.user.upsert({
-    where: { id: userId },
-    update: {
-      email: authUser.email,
-    },
-    create: {
-      id: userId,
-      email: authUser.email,
-    },
-  });
+  await ensureBaseRecords(userId, authUser.email, fullName);
 
-  await db.profile.upsert({
-    where: { userId },
-    update: {
-      fullName: inferName(authUser.email, fullName),
-    },
-    create: {
-      userId,
-      fullName: inferName(authUser.email, fullName),
-      timezone: "America/Recife",
-      dailyWaterGoal: 2500,
-    },
-  });
+  const user = requireValue(
+    unwrapData(
+      await supabase.from("User").select("*").eq("id", userId).maybeSingle(),
+      "Failed to load user",
+    ) as UserRow | null,
+    "User not found",
+  );
 
-  await db.waterGoal.upsert({
-    where: { userId },
-    update: {},
-    create: {
-      userId,
-      dailyGoalMl: 2500,
-    },
-  });
+  const profile = (unwrapData(
+    await supabase.from("Profile").select("*").eq("userId", userId).maybeSingle(),
+    "Failed to load profile",
+  ) ?? null) as ProfileRow | null;
 
-  const user = await db.user.findUniqueOrThrow({
-    where: { id: userId },
-    include: {
-      profile: true,
-      waterGoal: true,
-    },
-  });
+  const waterGoal = (unwrapData(
+    await supabase.from("WaterGoal").select("*").eq("userId", userId).maybeSingle(),
+    "Failed to load water goal",
+  ) ?? null) as WaterGoalRow | null;
 
-  return { userId, user };
+  return { userId, user: { ...user, profile, waterGoal } };
+}
+
+async function getActiveWorkoutPlan(userId: string) {
+  const supabase = await getDataClient();
+  const plan = (unwrapData(
+    await supabase
+      .from("WorkoutPlan")
+      .select("*")
+      .eq("userId", userId)
+      .eq("isActive", true)
+      .limit(1)
+      .maybeSingle(),
+    "Failed to load workout plan",
+  ) ?? null) as WorkoutPlanRow | null;
+
+  if (!plan) {
+    return null;
+  }
+
+  const days = (unwrapData(
+    await supabase
+      .from("WorkoutDay")
+      .select("*")
+      .eq("workoutPlanId", plan.id)
+      .order("weekDay", { ascending: true })
+      .order("sortOrder", { ascending: true }),
+    "Failed to load workout days",
+  ) ?? []) as WorkoutDayRow[];
+
+  const dayIds = days.map((day) => day.id);
+  const exercises =
+    dayIds.length > 0
+      ? ((unwrapData(
+          await supabase
+            .from("WorkoutExercise")
+            .select("*")
+            .in("workoutDayId", dayIds)
+            .order("sortOrder", { ascending: true }),
+          "Failed to load workout exercises",
+        ) ?? []) as WorkoutExerciseRow[])
+      : [];
+
+  return {
+    ...plan,
+    days: days.map((day) => ({
+      ...day,
+      exercises: exercises.filter((exercise) => exercise.workoutDayId === day.id),
+    })),
+  };
+}
+
+async function getActiveMealPlan(userId: string) {
+  const supabase = await getDataClient();
+  const plan = (unwrapData(
+    await supabase
+      .from("MealPlan")
+      .select("*")
+      .eq("userId", userId)
+      .eq("isActive", true)
+      .limit(1)
+      .maybeSingle(),
+    "Failed to load meal plan",
+  ) ?? null) as MealPlanRow | null;
+
+  if (!plan) {
+    return null;
+  }
+
+  const sections = (unwrapData(
+    await supabase
+      .from("MealSection")
+      .select("*")
+      .eq("mealPlanId", plan.id)
+      .order("sortOrder", { ascending: true }),
+    "Failed to load meal sections",
+  ) ?? []) as MealSectionRow[];
+
+  const sectionIds = sections.map((section) => section.id);
+  const items =
+    sectionIds.length > 0
+      ? ((unwrapData(
+          await supabase
+            .from("MealItem")
+            .select("*")
+            .in("mealSectionId", sectionIds)
+            .order("sortOrder", { ascending: true }),
+          "Failed to load meal items",
+        ) ?? []) as MealItemRow[])
+      : [];
+
+  return {
+    ...plan,
+    sections: sections.map((section) => ({
+      ...section,
+      items: items.filter((item) => item.mealSectionId === section.id),
+    })),
+  };
 }
 
 export async function getDashboardData() {
   const { userId, user } = await getCurrentUserContext();
+  const supabase = await getDataClient();
   const today = startOfDay(new Date());
+  const todayIso = today.toISOString();
 
-  const [tasks, taskLogs, waterLogs, workoutPlan, mealPlan, currentBook, appointments] =
-    await Promise.all([
-      db.task.findMany({
-        where: { userId, status: "ACTIVE" },
-        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-        take: 6,
-      }),
-      db.taskLog.findMany({
-        where: { userId, occurredOn: today },
-      }),
-      db.waterLog.findMany({
-        where: { userId, occurredAt: { gte: today } },
-      }),
-      db.workoutPlan.findFirst({
-        where: { userId, isActive: true },
-        include: {
-          days: {
-            orderBy: { weekDay: "asc" },
-            include: {
-              exercises: { orderBy: { sortOrder: "asc" } },
-            },
-          },
-        },
-      }),
-      db.mealPlan.findFirst({
-        where: { userId, isActive: true },
-        include: {
-          sections: {
-            orderBy: { sortOrder: "asc" },
-            include: { items: { orderBy: { sortOrder: "asc" } } },
-          },
-        },
-      }),
-      db.book.findFirst({
-        where: { userId, status: "READING" },
-        orderBy: { updatedAt: "desc" },
-      }),
-      db.appointment.findMany({
-        where: { userId, startsAt: { gte: today } },
-        orderBy: { startsAt: "asc" },
-        take: 3,
-      }),
-    ]);
+  const [
+    tasksResult,
+    taskLogsResult,
+    waterLogsResult,
+    workoutPlan,
+    mealPlan,
+    currentBookResult,
+    appointmentsResult,
+  ] = await Promise.all([
+    supabase
+      .from("Task")
+      .select("*")
+      .eq("userId", userId)
+      .eq("status", "ACTIVE")
+      .order("sortOrder", { ascending: true })
+      .order("createdAt", { ascending: true })
+      .limit(6),
+    supabase.from("TaskLog").select("*").eq("userId", userId).eq("occurredOn", todayIso),
+    supabase.from("WaterLog").select("*").eq("userId", userId).gte("occurredAt", todayIso),
+    getActiveWorkoutPlan(userId),
+    getActiveMealPlan(userId),
+    supabase
+      .from("Book")
+      .select("*")
+      .eq("userId", userId)
+      .eq("status", "READING")
+      .order("updatedAt", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("Appointment")
+      .select("*")
+      .eq("userId", userId)
+      .gte("startsAt", todayIso)
+      .order("startsAt", { ascending: true })
+      .limit(3),
+  ]);
+
+  const tasks = (unwrapData(tasksResult, "Failed to load tasks") ?? []) as TaskRow[];
+  const taskLogs = (unwrapData(taskLogsResult, "Failed to load task logs") ?? []) as TaskLogRow[];
+  const waterLogs = (unwrapData(waterLogsResult, "Failed to load water logs") ?? []) as WaterLogRow[];
+  const currentBook = (unwrapData(currentBookResult, "Failed to load current book") ?? null) as BookRow | null;
+  const appointments = (unwrapData(
+    appointmentsResult,
+    "Failed to load appointments",
+  ) ?? []) as AppointmentRow[];
 
   const completedTaskIds = new Set(
     taskLogs.filter((item) => item.completed).map((item) => item.taskId),
   );
   const waterConsumed = waterLogs.reduce((sum, entry) => sum + entry.amountMl, 0);
+  const todaysWorkout = workoutPlan?.days.find((day) => day.weekDay === new Date().getDay()) ?? null;
 
   return {
     userName: user.profile?.fullName ?? "Daniel",
@@ -135,9 +278,8 @@ export async function getDashboardData() {
     highlights: [
       {
         title: "Treino de hoje",
-        value: workoutPlan?.days.find((day) => day.weekDay === new Date().getDay())?.exercises
-          .length
-          ? `${workoutPlan.days.find((day) => day.weekDay === new Date().getDay())?.exercises.length} exercicios`
+        value: todaysWorkout?.exercises.length
+          ? `${todaysWorkout.exercises.length} exercicios`
           : "Sem treino hoje",
         meta: workoutPlan?.name ?? "Nenhum plano ativo",
       },
@@ -157,8 +299,17 @@ export async function getDashboardData() {
         meta: appointments[0]?.title ?? "Agenda livre",
       },
     ],
-    currentBook,
-    appointments,
+    currentBook: currentBook
+      ? {
+          title: currentBook.title,
+          author: currentBook.author,
+        }
+      : null,
+    appointments: appointments.map((item) => ({
+      id: item.id,
+      title: item.title,
+      startsAt: new Date(item.startsAt),
+    })),
     waterConsumed,
     waterGoal: user.waterGoal?.dailyGoalMl ?? 2500,
   };
@@ -166,18 +317,11 @@ export async function getDashboardData() {
 
 export async function getModuleData(slug: string) {
   const { userId } = await getCurrentUserContext();
+  const supabase = await getDataClient();
 
   switch (slug) {
     case "treinos": {
-      const plan = await db.workoutPlan.findFirst({
-        where: { userId, isActive: true },
-        include: {
-          days: {
-            orderBy: { weekDay: "asc" },
-            include: { exercises: { orderBy: { sortOrder: "asc" } } },
-          },
-        },
-      });
+      const plan = await getActiveWorkoutPlan(userId);
 
       return {
         planId: plan?.id ?? null,
@@ -202,15 +346,7 @@ export async function getModuleData(slug: string) {
       };
     }
     case "dieta": {
-      const plan = await db.mealPlan.findFirst({
-        where: { userId, isActive: true },
-        include: {
-          sections: {
-            orderBy: { sortOrder: "asc" },
-            include: { items: { orderBy: { sortOrder: "asc" } } },
-          },
-        },
-      });
+      const plan = await getActiveMealPlan(userId);
 
       return {
         planId: plan?.id ?? null,
@@ -235,11 +371,16 @@ export async function getModuleData(slug: string) {
       };
     }
     case "livros": {
-      const books = await db.book.findMany({
-        where: { userId },
-        orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
-        take: 12,
-      });
+      const books = ((unwrapData(
+        await supabase
+          .from("Book")
+          .select("*")
+          .eq("userId", userId)
+          .order("status", { ascending: true })
+          .order("updatedAt", { ascending: false })
+          .limit(12),
+        "Failed to load books",
+      ) ?? []) as BookRow[]);
 
       return {
         countLabel: `${books.length} livros`,
@@ -252,11 +393,16 @@ export async function getModuleData(slug: string) {
       };
     }
     case "filmes": {
-      const movies = await db.movie.findMany({
-        where: { userId },
-        orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
-        take: 12,
-      });
+      const movies = ((unwrapData(
+        await supabase
+          .from("Movie")
+          .select("*")
+          .eq("userId", userId)
+          .order("status", { ascending: true })
+          .order("updatedAt", { ascending: false })
+          .limit(12),
+        "Failed to load movies",
+      ) ?? []) as MovieRow[]);
 
       return {
         countLabel: `${movies.length} filmes`,
@@ -269,17 +415,22 @@ export async function getModuleData(slug: string) {
       };
     }
     case "hidratacao": {
-      const logs = await db.waterLog.findMany({
-        where: { userId, occurredAt: { gte: startOfDay(new Date()) } },
-        orderBy: { occurredAt: "desc" },
-      });
+      const logs = ((unwrapData(
+        await supabase
+          .from("WaterLog")
+          .select("*")
+          .eq("userId", userId)
+          .gte("occurredAt", startOfDay(new Date()).toISOString())
+          .order("occurredAt", { ascending: false }),
+        "Failed to load water logs",
+      ) ?? []) as WaterLogRow[]);
 
       return {
         countLabel: `${logs.reduce((sum, item) => sum + item.amountMl, 0)}ml hoje`,
         records: logs.map((log) => ({
           id: log.id,
           title: `${log.amountMl}ml`,
-          subtitle: log.occurredAt.toLocaleTimeString("pt-BR", {
+          subtitle: new Date(log.occurredAt).toLocaleTimeString("pt-BR", {
             hour: "2-digit",
             minute: "2-digit",
           }),
@@ -287,28 +438,37 @@ export async function getModuleData(slug: string) {
       };
     }
     case "compromissos": {
-      const items = await db.appointment.findMany({
-        where: { userId },
-        orderBy: { startsAt: "asc" },
-        take: 12,
-      });
+      const items = ((unwrapData(
+        await supabase
+          .from("Appointment")
+          .select("*")
+          .eq("userId", userId)
+          .order("startsAt", { ascending: true })
+          .limit(12),
+        "Failed to load appointments",
+      ) ?? []) as AppointmentRow[]);
 
       return {
         countLabel: `${items.length} registros`,
         records: items.map((item) => ({
           id: item.id,
           title: item.title,
-          subtitle: `${item.startsAt.toLocaleDateString("pt-BR")} • ${item.status}`,
+          subtitle: `${new Date(item.startsAt).toLocaleDateString("pt-BR")} • ${item.status}`,
           status: item.status,
         })),
       };
     }
     case "lembretes": {
-      const items = await db.reminder.findMany({
-        where: { userId },
-        orderBy: [{ status: "asc" }, { dueAt: "asc" }],
-        take: 12,
-      });
+      const items = ((unwrapData(
+        await supabase
+          .from("Reminder")
+          .select("*")
+          .eq("userId", userId)
+          .order("status", { ascending: true })
+          .order("dueAt", { ascending: true, nullsFirst: false })
+          .limit(12),
+        "Failed to load reminders",
+      ) ?? []) as ReminderRow[]);
 
       return {
         countLabel: `${items.length} lembretes`,
@@ -321,28 +481,50 @@ export async function getModuleData(slug: string) {
       };
     }
     case "remedios": {
-      const items = await db.medication.findMany({
-        where: { userId, isActive: true },
-        orderBy: { createdAt: "desc" },
-        include: { schedules: true },
-        take: 12,
-      });
+      const items = ((unwrapData(
+        await supabase
+          .from("Medication")
+          .select("*")
+          .eq("userId", userId)
+          .eq("isActive", true)
+          .order("createdAt", { ascending: false })
+          .limit(12),
+        "Failed to load medications",
+      ) ?? []) as MedicationRow[]);
+
+      const schedules =
+        items.length > 0
+          ? ((unwrapData(
+              await supabase
+                .from("MedicationSchedule")
+                .select("*")
+                .in(
+                  "medicationId",
+                  items.map((item) => item.id),
+                ),
+              "Failed to load medication schedules",
+            ) ?? []) as MedicationScheduleRow[])
+          : [];
 
       return {
         countLabel: `${items.length} remedios ativos`,
         records: items.map((item) => ({
           id: item.id,
           title: item.name,
-          subtitle: `${item.schedules.length} horarios • ${item.frequencyType}`,
+          subtitle: `${schedules.filter((schedule) => schedule.medicationId === item.id).length} horarios • ${item.frequencyType}`,
         })),
       };
     }
     case "exames": {
-      const items = await db.exam.findMany({
-        where: { userId },
-        orderBy: { updatedAt: "desc" },
-        take: 12,
-      });
+      const items = ((unwrapData(
+        await supabase
+          .from("Exam")
+          .select("*")
+          .eq("userId", userId)
+          .order("updatedAt", { ascending: false })
+          .limit(12),
+        "Failed to load exams",
+      ) ?? []) as ExamRow[]);
 
       return {
         countLabel: `${items.length} exames`,
