@@ -4,6 +4,7 @@ out
 .env*.local
 .env
 .DS_Store
+._*
 *.log
 .vercel
 next-env.d.ts

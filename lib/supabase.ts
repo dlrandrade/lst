@@ -1,20 +1,40 @@
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient, createServerClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { NextRequest, NextResponse } from "next/server";
 
-// Public Supabase credentials. The anon key is safe to ship to the browser
-// — row-level security policies enforce access in the database.
-const DEFAULT_URL = "https://pfirxbvkombvzdeartqs.supabase.co";
-const DEFAULT_ANON =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmaXJ4YnZrb21idnpkZWFydHFzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2NDk3NTMsImV4cCI6MjA5MjIyNTc1M30.DJWyQR9VdMV-XRRpU9Cw6EHsKEnH4NxqbmySYzs9QmM";
+function publicEnv() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) {
+    throw new Error(
+      "Missing Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+    );
+  }
+  return { url, key };
+}
 
-let cached: SupabaseClient | null = null;
+let cachedBrowser: SupabaseClient | null = null;
 
 export function supabaseBrowser(): SupabaseClient | null {
   if (typeof window === "undefined") return null;
-  if (cached) return cached;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || DEFAULT_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_ANON;
-  if (!url || !key) return null;
-  cached = createBrowserClient(url, key);
-  return cached;
+  if (cachedBrowser) return cachedBrowser;
+  const { url, key } = publicEnv();
+  cachedBrowser = createBrowserClient(url, key);
+  return cachedBrowser;
+}
+
+/** Middleware client — refreshes the session and forwards cookies on the response. */
+export function supabaseMiddleware(req: NextRequest, res: NextResponse) {
+  const { url, key } = publicEnv();
+  return createServerClient(url, key, {
+    cookies: {
+      getAll: () => req.cookies.getAll(),
+      setAll: (toSet: { name: string; value: string; options?: Record<string, unknown> }[]) => {
+        for (const { name, value, options } of toSet) {
+          req.cookies.set(name, value);
+          res.cookies.set(name, value, options as any);
+        }
+      },
+    },
+  });
 }

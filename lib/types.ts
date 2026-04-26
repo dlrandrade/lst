@@ -22,7 +22,7 @@ export type WorkoutExercise = {
 export type Meal = {
   id: string;
   label: string;
-  month: string;
+  month: string | null;
   items: string[];
   done: boolean;
   position: number;
@@ -35,4 +35,64 @@ export type Book = {
   year: number;
   read: boolean;
   position: number;
+};
+
+export type Movie = {
+  id: string;
+  title: string;
+  year: number | null;
+  genres: string[];
+  poster_url: string | null;
+  rating: number | null;
+  watched: boolean;
+  watched_at: string | null;
+  position: number;
+};
+
+export type WaterEntry = {
+  id: string;
+  amount_ml: number;
+  drank_at: string;
+};
+
+export type Appointment = {
+  id: string;
+  title: string;
+  description: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  location: string | null;
+  done: boolean;
+};
+
+export type Reminder = {
+  id: string;
+  title: string;
+  remind_at: string;
+  recurrence: string | null;
+  done: boolean;
+};
+
+export type Medication = {
+  id: string;
+  name: string;
+  dosage: string | null;
+  times: string[];
+  active: boolean;
+};
+
+export type Exam = {
+  id: string;
+  title: string;
+  scheduled_for: string | null;
+  result: string | null;
+  notes: string | null;
+  done: boolean;
+};
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  created_at: string;
 };

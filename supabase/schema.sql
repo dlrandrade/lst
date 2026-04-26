@@ -1,8 +1,9 @@
--- lst schema
+-- lst schema — full
 -- Paste into Supabase SQL editor and run.
 
 create extension if not exists "pgcrypto";
 
+-- ================= CORE =================
 create table if not exists tasks (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -11,6 +12,7 @@ create table if not exists tasks (
   created_at timestamptz not null default now()
 );
 
+-- ================= TREINO =================
 create table if not exists workout_days (
   id uuid primary key default gen_random_uuid(),
   day_of_week smallint not null unique check (day_of_week between 0 and 6),
@@ -25,6 +27,7 @@ create table if not exists workout_exercises (
   position int not null default 0
 );
 
+-- ================= DIETA =================
 create table if not exists meals (
   id uuid primary key default gen_random_uuid(),
   label text not null,
@@ -34,6 +37,7 @@ create table if not exists meals (
   position int not null default 0
 );
 
+-- ================= LIVROS =================
 create table if not exists books (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -44,29 +48,110 @@ create table if not exists books (
   created_at timestamptz not null default now()
 );
 
-alter table tasks enable row level security;
-alter table workout_days enable row level security;
-alter table workout_exercises enable row level security;
-alter table meals enable row level security;
-alter table books enable row level security;
+-- ================= FILMES =================
+create table if not exists movies (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  year int,
+  genres text[] not null default '{}',
+  poster_url text,
+  rating numeric(3,1),
+  watched boolean not null default false,
+  watched_at timestamptz,
+  position int not null default 0,
+  created_at timestamptz not null default now()
+);
 
--- Open policies (single-user app). Tighten later if needed.
+-- ================= ÁGUA =================
+create table if not exists water_entries (
+  id uuid primary key default gen_random_uuid(),
+  amount_ml int not null,
+  drank_at timestamptz not null default now()
+);
+
+create table if not exists prefs (
+  id int primary key default 1,
+  daily_water_goal_ml int not null default 3000,
+  check (id = 1)
+);
+insert into prefs (id) values (1) on conflict do nothing;
+
+-- ================= COMPROMISSOS =================
+create table if not exists appointments (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  description text,
+  starts_at timestamptz not null,
+  ends_at timestamptz,
+  location text,
+  done boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- ================= LEMBRETES =================
+create table if not exists reminders (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  remind_at timestamptz not null,
+  recurrence text,
+  done boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- ================= REMÉDIOS =================
+create table if not exists medications (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  dosage text,
+  times text[] not null default '{}',
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists med_logs (
+  id uuid primary key default gen_random_uuid(),
+  medication_id uuid not null references medications(id) on delete cascade,
+  taken_at timestamptz not null default now()
+);
+
+-- ================= EXAMES =================
+create table if not exists exams (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  scheduled_for timestamptz,
+  result text,
+  notes text,
+  done boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- ================= AI CHAT =================
+create table if not exists chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  role text not null check (role in ('user','assistant','system')),
+  content text not null,
+  created_at timestamptz not null default now()
+);
+
+-- ================= RLS (open policies — single-user app) =================
 do $$
 declare t text;
 begin
-  for t in select unnest(array['tasks','workout_days','workout_exercises','meals','books']) loop
+  for t in select unnest(array[
+    'tasks','workout_days','workout_exercises','meals','books',
+    'movies','water_entries','prefs','appointments','reminders',
+    'medications','med_logs','exams','chat_messages'
+  ]) loop
+    execute format('alter table %I enable row level security;', t);
     execute format('drop policy if exists "public all" on %I;', t);
     execute format('create policy "public all" on %I for all using (true) with check (true);', t);
   end loop;
 end$$;
 
--- Seed
+-- ================= SEEDS =================
 insert into tasks (title, position) values
-  ('Beber água', 1),
-  ('Tomar creatina', 2),
-  ('Pagar carro', 3),
-  ('Ler Mastria', 4),
-  ('Hoje é Leg Day', 5)
+  ('Beber água', 1),('Tomar creatina', 2),('Pagar carro', 3),
+  ('Ler Mastria', 4),('Hoje é Leg Day', 5)
 on conflict do nothing;
 
 insert into workout_days (day_of_week, label) values
@@ -102,4 +187,11 @@ insert into books (title, author, year, read, position) values
   ('Dom Casmurro', 'Machado de Assis', 2026, false, 5),
   ('Cem Anos de Solidão', 'Gabriel García Márquez', 2026, false, 6),
   ('Orgulho e Preconceito', 'Jane Austen', 2026, false, 7)
+on conflict do nothing;
+
+insert into movies (title, year, genres, rating, watched, position) values
+  ('Oppenheimer', 2023, array['Biography','Drama'], null, false, 1),
+  ('Dune: Part Two', 2024, array['Sci-Fi','Drama'], null, false, 2),
+  ('Inception', 2010, array['Sci-Fi','Action'], 4.5, true, 3),
+  ('Interstellar', 2014, array['Sci-Fi','Drama'], 5.0, true, 4)
 on conflict do nothing;

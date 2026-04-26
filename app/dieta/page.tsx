@@ -8,18 +8,23 @@ import { PageHeader } from "@/components/PageHeader";
 import { Fork } from "@/components/Icons";
 
 const FALLBACK: Meal[] = [
-  { id: "1", label: "Café da manhã", month: "Abril",
+  { id: "1", label: "Café da manhã", month: null,
     items: ["3 ovos","1 fatia de pão de caixa","1 fruta","Café sem açúcar","Iogurte natural com granola"],
     done: false, position: 1 },
-  { id: "2", label: "Almoço", month: "Abril",
+  { id: "2", label: "Almoço", month: null,
     items: ["300g de proteína","300g de carboidrato","Refrigerante sem açúcar"],
     done: false, position: 2 },
-  { id: "3", label: "Lanche", month: "Abril",
+  { id: "3", label: "Lanche", month: null,
     items: ["Iogurte natural com granola"],
     done: false, position: 3 },
-  { id: "4", label: "Jantar", month: "Abril",
+  { id: "4", label: "Jantar", month: null,
     items: ["200g de proteína","Salada à vontade"],
     done: false, position: 4 },
+];
+
+const MONTHS_PT = [
+  "Janeiro","Fevereiro","Março","Abril","Maio","Junho",
+  "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro",
 ];
 
 export default function DietaPage() {
@@ -40,7 +45,7 @@ export default function DietaPage() {
     if (supabase) await supabase.from("meals").update({ done }).eq("id", id);
   }
 
-  const month = meals[0]?.month ?? "Abril";
+  const month = MONTHS_PT[new Date().getMonth()];
 
   return (
     <div>
